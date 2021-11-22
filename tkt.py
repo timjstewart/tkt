@@ -66,13 +66,13 @@ class TicketConfig:
 
     def get_branch_name(self) -> str:
         match = self.branch_name_regex.search(self.ticket_url)
-        if match:
+        if match and match.group(1):
             return match.group(1)
         raise Exception(f"the regex '{self.branch_name_regex.pattern}' did "
                         f"not match the ticket URL: '{self.ticket_url}'")
 
     def get_source_dir(self) -> Path:
-        regex = re.compile(r".*/(.*).git")
+        regex = re.compile(r".*/(.*)")
         repo_dir = regex.search(self.remote_repository_url).group(1)
         return Path(self.local_repository_parent_dir / repo_dir)
 
@@ -226,29 +226,33 @@ def run_git(*args: List[Any],
         return True
     except Exception as ex:
         if show_error_output:
-            print(f"error: {result} {ex}")
+            print(f"error: {result.stderr.decode('utf-8')} {ex}")
         return False
 
 
 def clone_repository(remote_url: str,
                      parent_dir: Path) -> bool:
-    return run_git("clone", remote_url, pwd=parent_dir,
-                   show_error_output=False)
+    print("attempting to clone repository...")
+    result = run_git("clone", remote_url, pwd=parent_dir,
+                     show_error_output=False)
+    return result
 
 
 def pull_repository(remote_url: str,
                     parent_dir: Path) -> bool:
-    regex = re.compile(r".*/(.*).git")
+    print("attempting to pull repository...")
+    regex = re.compile(r".*/(.*)")
     repo_dir = regex.search(remote_url).group(1)
     repo_dir = Path(parent_dir / repo_dir)
-
-    return run_git("pull", pwd=repo_dir)
+    result = run_git("pull", pwd=repo_dir, capture_output=True,
+                     show_error_output=False)
+    return result
 
 
 def checkout_branch(remote_url: str,
                     main_branch_name: str,
                     parent_dir: Path) -> bool:
-    regex = re.compile(r".*/(.*).git")
+    regex = re.compile(r".*/(.*)")
     repo_dir = regex.search(remote_url).group(1)
     repo_dir = Path(parent_dir / repo_dir)
 
@@ -258,12 +262,12 @@ def checkout_branch(remote_url: str,
 def create_branch(remote_url: str,
                     branch_name: str,
                     parent_dir: Path) -> bool:
-    regex = re.compile(r".*/(.*).git")
+    regex = re.compile(r".*/(.*)")
     repo_dir = regex.search(remote_url).group(1)
     repo_dir = Path(parent_dir / repo_dir)
 
     return run_git("checkout", "-b", branch_name, pwd=repo_dir,
-                   show_error_output=False)
+                   show_error_output=True)
 
 def append_to_ticket_file(*args, **kwargs) -> None:
     s = io.StringIO()
@@ -281,16 +285,22 @@ def main():
     try:
         cfg = get_config(sys.argv[1:])
         branch_name = cfg.get_branch_name()
+
         (clone_repository(remote_url=cfg.remote_repository_url,
                           parent_dir=cfg.local_repository_parent_dir)
          or pull_repository(remote_url=cfg.remote_repository_url,
                             parent_dir=cfg.local_repository_parent_dir))
+
         checkout_branch(remote_url=cfg.remote_repository_url,
                         main_branch_name=cfg.main_branch_name,
                         parent_dir=cfg.local_repository_parent_dir)
-        create_branch(remote_url=cfg.remote_repository_url,
+
+        (create_branch(remote_url=cfg.remote_repository_url,
                       branch_name=cfg.get_branch_name(),
-                      parent_dir=cfg.local_repository_parent_dir)
+                      parent_dir=cfg.local_repository_parent_dir) or
+        checkout_branch(remote_url=cfg.remote_repository_url,
+                        main_branch_name=cfg.get_branch_name(),
+                        parent_dir=cfg.local_repository_parent_dir))
         append_to_ticket_file(
             ticket_file_path=cfg.ticket_file_path,
             remote_url=cfg.remote_repository_url,
